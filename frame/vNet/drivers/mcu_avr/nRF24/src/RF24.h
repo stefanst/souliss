@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2011 J. Coliz <maniacbug@ymail.com>
+ Portions Copyright (C) 2011 Greg Copeland
 
  This program is free software; you can redistribute it and/or
  modify it under the terms of the GNU General Public License
@@ -14,6 +15,8 @@
 
 #ifndef __RF24_H__
 #define __RF24_H__
+
+#include "nRF24L01.h"
 
 /**
  * Power Amplifier level.
@@ -129,7 +132,7 @@ protected:
    * @param len Number of bytes to be sent
    * @return Current value of status register
    */
-  uint8_t write_payload(const void* buf, uint8_t len);
+  uint8_t write_payload(const void* buf, uint8_t len, const uint8_t writeType);
 
   /**
    * Read the receive payload
@@ -162,6 +165,50 @@ protected:
    * @return Current value of status register
    */
   uint8_t get_status(void);
+
+  /**
+   * Decode and print the given status to stdout
+   *
+   * @param status Status value to print
+   *
+   * @warning Does nothing if stdout is not defined.  See fdevopen in stdio.h
+   */
+  void print_status(uint8_t status);
+
+  /**
+   * Decode and print the given 'observe_tx' value to stdout
+   *
+   * @param value The observe_tx value to print
+   *
+   * @warning Does nothing if stdout is not defined.  See fdevopen in stdio.h
+   */
+  void print_observe_tx(uint8_t value);
+
+  /**
+   * Print the name and value of an 8-bit register to stdout
+   *
+   * Optionally it can print some quantity of successive
+   * registers on the same line.  This is useful for printing a group
+   * of related registers on one line.
+   *
+   * @param name Name of the register
+   * @param reg Which register. Use constants from nRF24L01.h
+   * @param qty How many successive registers to print
+   */
+  void print_byte_register(const char* name, uint8_t reg, uint8_t qty = 1);
+
+  /**
+   * Print the name and value of a 40-bit address register to stdout
+   *
+   * Optionally it can print some quantity of successive
+   * registers on the same line.  This is useful for printing a group
+   * of related registers on one line.
+   *
+   * @param name Name of the register
+   * @param reg Which register. Use constants from nRF24L01.h
+   * @param qty How many successive registers to print
+   */
+  void print_address_register(const char* name, uint8_t reg, uint8_t qty = 1);
 
   /**
    * Turn on or off the special features of the chip
@@ -230,9 +277,11 @@ public:
    *
    * @param buf Pointer to the data to be sent
    * @param len Number of bytes to be sent
+   * @param multicast true or false. True, buffer will be multicast; ignoring retry/timeout
    * @return True if the payload was delivered successfully false if not
+   * for multicast payloads, true only means it was transmitted.
    */
-  bool write( const void* buf, uint8_t len );
+  bool write( const void* buf, uint8_t len, const bool multicast=false );
 
   /**
    * Test whether there are bytes available to be read
@@ -296,12 +345,23 @@ public:
    * pipe 0 for reading, and then startListening(), it will overwrite the
    * writing pipe.  Ergo, do an openWritingPipe() again before write().
    *
+   * @warning Pipe 0 is also used as the multicast address pipe. Pipe 1
+   * is the unicast pipe address.
+   *
    * @todo Enforce the restriction that pipes 1-5 must share the top 32 bits
    *
    * @param number Which pipe# to open, 0-5.
    * @param address The 40-bit address of the pipe to open.
    */
   void openReadingPipe(uint8_t number, uint64_t address);
+
+
+  /**
+   * Close a pipe after it has been previously opened.
+   * Can be safely called without having previously opened a pipe.
+   * @param pipe Which pipe # to close, 0-5.
+   */
+  void closeReadingPipe( uint8_t pipe ) ;
 
   /**@}*/
   /**
@@ -321,12 +381,29 @@ public:
    */
   void setRetries(uint8_t delay, uint8_t count);
 
+  /**@{*/
+  /**
+   * Get delay and count values of the radio
+   *
+   * @param high and low nibbles of delay and count as currently configured on
+   * the radio. Valid ranges for both nibbles are 0x00-0x0f. The delay nibble
+   * translates as 0=250us, 15=4000us, in bit multiples of 250us.
+   */
+  uint8_t getRetries( void ) ;
+
   /**
    * Set RF communication channel
    *
    * @param channel Which RF channel to communicate on, 0-127
    */
   void setChannel(uint8_t channel);
+
+  /**
+   * Get RF communication channel
+   *
+   * @param channel To which RF channel radio is current tuned, 0-127
+   */
+  uint8_t getChannel(void);
 
   /**
    * Set Static Payload Size
@@ -366,6 +443,8 @@ public:
    *
    * Ack payloads are a handy way to return data back to senders without
    * manually changing the radio modes on both units.
+   *
+   * @warning Do note, multicast payloads will not trigger ack payloads.
    *
    * @see examples/pingpair_pl/pingpair_pl.pde
    */
@@ -415,7 +494,7 @@ public:
    * Relative mnemonics have been used to allow for future PA level
    * changes. According to 6.5 of the nRF24L01+ specification sheet,
    * they translate to: RF24_PA_MIN=-18dBm, RF24_PA_LOW=-12dBm,
-   * RF24_PA_MED=-6dBM, and RF24_PA_HIGH=0dBm.
+   * RF24_PA_HIGH=-6dBM, and RF24_PA_MAX=0dBm.
    *
    * @param level Desired PA level.
    */
@@ -522,15 +601,17 @@ public:
    *
    * @param buf Pointer to the data to be sent
    * @param len Number of bytes to be sent
-   * @return True if the payload was delivered successfully false if not
+   * @param multicast true or false. True, buffer will be multicast; ignoring retry/timeout
    */
-  void startWrite( const void* buf, uint8_t len );
+  void startWrite( const void* buf, uint8_t len, const bool multicast=false );
 
   /**
    * Write an ack payload for the specified pipe
    *
    * The next time a message is received on @p pipe, the data in @p buf will
    * be sent back in the acknowledgement.
+   *
+   * @warning Do note, multicast payloads will not trigger ack payloads.
    *
    * @warning According to the data sheet, only three of these can be pending
    * at any time.  I have not tested this.
@@ -599,6 +680,14 @@ public:
    * @return true if this is a legitimate radio 
    */
   bool isValid() { return ce_pin != 0xff && csn_pin != 0xff; } 
+
+  /**
+   * Calculate the maximum timeout in us based on current hardware
+   * configuration.
+   *
+   * @return us of maximum timeout; accounting for retries
+   */
+  uint16_t getMaxTimeout(void) ;
 
   /**@}*/
 };
